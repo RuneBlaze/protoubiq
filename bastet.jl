@@ -2,6 +2,9 @@
 const shell_special = "#{}()[]<>|&*?~;"
 using ArgParse, Glob
 using Base.Filesystem
+using DataFrames
+using CSV
+
 function parse_commandline()
     s = ArgParseSettings()
     @add_arg_table s begin
@@ -13,7 +16,7 @@ function parse_commandline()
             required = true
         "--exec", "-e"
             help = ""
-            required = true
+            # required = true
             arg_type = String
         "--suffix", "-s"
             arg_type = String
@@ -24,7 +27,12 @@ function parse_commandline()
             default = -1
         "--output", "-o"
             arg_type = String
-            required = true
+            # required = true
+        "--across", "-a"
+            arg_type = String
+            nargs = '+'
+        "--against"
+            arg_type = String
     end
     parse_args(s)
 end
@@ -111,46 +119,88 @@ function mk_slurm(io, fname, jobname, cmds)
     end
 end
 
-SUFFIX = args["suffix"]
-EXEC = args["exec"]
-BINS = haskey(args, "bins") ? args["bins"] : -1
+function execmode()
+    SUFFIX = args["suffix"]
+    EXEC = args["exec"]
+    BINS = haskey(args, "bins") ? args["bins"] : -1
 
-cmds = String[]
-for f = files
-    @info "processing $f"
-    outputf = "$f.$SUFFIX"
-    metaf = "$outputf.meta"
-    if isfile(outputf) && isfile(metaf)
-        @warn "$f has already finished processing"
-        continue
+    cmds = String[]
+    for f = files
+        @info "processing $f"
+        outputf = "$f.$SUFFIX"
+        metaf = "$outputf.meta"
+        if isfile(outputf) && isfile(metaf)
+            @warn "$f has already finished processing"
+            continue
+        end
+        subst_map = Dict(
+            "{{}}" => f,
+            "<output>" => outputf
+        )
+        basecmd = subst(EXEC, subst_map) #Cmd([subst(e, subst_map) for e in split(EXEC, " ")])
+        # memfile = tempname()
+        pgm = Sys.isapple() ? "gtime" : "/usr/bin/time"
+        finalcmd = "$pgm -f '%e;%M' -o $metaf $basecmd"
+        @info "final command: $finalcmd"
+
+        push!(cmds, finalcmd)
     end
-    subst_map = Dict(
-        "{{}}" => f,
-        "<output>" => outputf
+
+    bins = distributebins(cmds, BINS == -1 ? length(cmds) : BINS)
+    mkpath(args["output"])
+    for (i,b)=enumerate(bins)
+        of = joinpath(args["output"], "$SUFFIX.$i.sh")
+        @info "written to $of"
+        open(of, "w+") do f
+            mk_slurm(f, of, "$SUFFIX.$i", b)
+        end
+    end
+
+    function commandhelper(output)
+        "find $output -name \"*.sh\" | xargs -I '{}' sbatch {}"
+    end
+
+    println("Generation finished!")
+    c = commandhelper(args["output"])
+    println("Run `$c` to queue your job")
+end
+
+function againstmode()
+    # we now compare phylogenetic trees, again
+    # we first make a temporary dataframe of all the parameters
+    # and leave the heavy-lifting to Python
+    condition_level = 1
+    tmp = splitpath(files[1])[condition_level]
+    for f = files
+        if splitpath(f)[condition_level] != tmp
+            condition_level += 1
+            break
+        end
+    end
+
+    df = DataFrame(
+        inputpath = String[],
+        condition = String[],
+        streepath = String[],
+        method = String[],
+        k = Int[],
     )
-    basecmd = subst(EXEC, subst_map) #Cmd([subst(e, subst_map) for e in split(EXEC, " ")])
-    # memfile = tempname()
-    pgm = Sys.isapple() ? "gtime" : "/usr/bin/time"
-    finalcmd = "$pgm -f '%e;%M' -o $metaf $basecmd"
-    @info "final command: $finalcmd"
-
-    push!(cmds, finalcmd)
-end
-
-bins = distributebins(cmds, BINS == -1 ? length(cmds) : BINS)
-mkpath(args["output"])
-for (i,b)=enumerate(bins)
-    of = joinpath(args["output"], "$SUFFIX.$i.sh")
-    @info "written to $of"
-    open(of, "w+") do f
-        mk_slurm(f, of, "$SUFFIX.$i", b)
+    for f = files
+        cond = splitpath(f)[condition_level]
+        for a = args["across"]
+            ip = "$f.$a"
+            sp = args["against"]
+            k = parse(Int, last(split(f, "."))[2:end])
+            push!(df, (ip, cond, sp, a, k))
+        end
     end
+    csvp = tempname()
+    CSV.write(csvp, df)
+    run(`python3 protoubiq/reporter.py -i csvp`)
 end
 
-function commandhelper(output)
-    "find $output -name \"*.sh\" | xargs -I '{}' sbatch {}"
+if args["exec"]
+    execmode()
+elseif args["against"]
+    againstmode()
 end
-
-println("Generation finished!")
-c = commandhelper(args["output"])
-println("Run `$c` to queue your job")
