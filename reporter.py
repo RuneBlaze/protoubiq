@@ -1,3 +1,4 @@
+
 import argparse
 import tempfile
 from os.path import join
@@ -78,7 +79,7 @@ nrf = []
 
 for i, r in df.iterrows():
     nrf.append(comparetreepath(r.streepath, r.inputpath)[-1])
-df["nrf"] = nrf
+df["rf"] = nrf
 dfa = df.set_index(['condition', 'k', 'method'])[['rf']]
 with pd.option_context("display.max_rows", 1000):
     mdfa = dfa.groupby(level=list(range(3))).mean()

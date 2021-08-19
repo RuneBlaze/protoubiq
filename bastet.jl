@@ -20,7 +20,6 @@ function parse_commandline()
             arg_type = String
         "--suffix", "-s"
             arg_type = String
-            required = true
         "--bins", "-b"
             arg_type = Int
             required = false
@@ -170,13 +169,13 @@ function againstmode()
     # we first make a temporary dataframe of all the parameters
     # and leave the heavy-lifting to Python
     condition_level = 1
-    tmp = splitpath(files[1])[condition_level]
-    for f = files
-        if splitpath(f)[condition_level] != tmp
-            condition_level += 1
-            break
-        end
-    end
+    #tmp = splitpath(files[1])[condition_level]
+    #for f = files
+    #    if splitpath(f)[condition_level] != tmp
+    #        condition_level += 1
+    #        break
+    #    end
+    #end
 
     df = DataFrame(
         inputpath = String[],
@@ -196,11 +195,12 @@ function againstmode()
     end
     csvp = tempname()
     CSV.write(csvp, df)
-    run(`python3 protoubiq/reporter.py -i csvp`)
+    reporter = joinpath(@__DIR__,"protoubiq/reporter.py")
+    run(`python3 $reporter -i $csvp`)
 end
 
-if args["exec"]
+if !isnothing(args["exec"])
     execmode()
-elseif args["against"]
+elseif !isnothing(args["against"])
     againstmode()
 end
