@@ -186,9 +186,10 @@ function againstmode()
     )
     for f = files
         cond = splitpath(f)[condition_level]
+        repname = basename(dirname(inputpath))
         for a = args["across"]
             ip = "$f.$a"
-            sp = args["against"]
+            sp = subst(args["against"], Dir("<repname>" => repname, "<cond>" => cond))
             k = parse(Int, last(split(f, "."))[2:end])
             push!(df, (ip, cond, sp, a, k))
         end
