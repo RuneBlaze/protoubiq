@@ -14,6 +14,14 @@ function parse_commandline()
             arg_type = String
             action = :store_arg
             required = true
+        "--range", "-r"
+            help=""
+            nargs = '+'
+            arg_type = Int64
+            nargs = 3
+        default = [1, 1, 1]
+
+
         "--exec", "-e"
             help = ""
             # required = true
@@ -118,23 +126,37 @@ function mk_slurm(io, fname, jobname, cmds)
     end
 end
 
+
+function levelrange(x,s,y)
+    res = []
+    v = collect(StepRange(x, s, y))
+    for i in 1:(length(v))
+        push!(res, i == length(v) ? (v[i], y) : (v[i], v[i+1]-1))
+    end
+    res
+end
+
+using Base.Iterators
+
 function execmode()
     SUFFIX = args["suffix"]
     EXEC = args["exec"]
     BINS = haskey(args, "bins") ? args["bins"] : -1
-
+    RANGE = levelrange(args["range"]...)
     cmds = String[]
-    for f = files
+    for (f, (st, ed)) = product(files, RANGE)
         @info "processing $f"
         outputf = "$f.$SUFFIX"
         metaf = "$outputf.meta"
-        if isfile(outputf) && isfile(metaf)
+        if isfile(outputf) && filesize(outputf) > 0
             @warn "$f has already finished processing"
             continue
         end
         subst_map = Dict(
             "{{}}" => f,
-            "<output>" => outputf
+            "<output>" => outputf,
+            "<s>" => st,
+            "<e>" => ed,
         )
         basecmd = subst(EXEC, subst_map) #Cmd([subst(e, subst_map) for e in split(EXEC, " ")])
         # memfile = tempname()
@@ -186,10 +208,15 @@ function againstmode()
     )
     for f = files
         cond = splitpath(f)[condition_level]
-        repname = basename(dirname(inputpath))
+        splitted = splitpath(dirname(f))
+        repname = basename(dirname(f))
         for a = args["across"]
             ip = "$f.$a"
-            sp = subst(args["against"], Dir("<repname>" => repname, "<cond>" => cond))
+            if !isfile(ip) || filesize(ip) <= 0
+                @warn "$ip does not exist for method $a. Embrace yourself."
+                continue
+            end
+            sp = subst(args["against"], Dict("<repname>" => repname, "<repname-1>" => splitted[max(end - 1, 1)], "<cond>" => cond))
             k = parse(Int, last(split(f, "."))[2:end])
             push!(df, (ip, cond, sp, a, k))
         end

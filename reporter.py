@@ -55,8 +55,12 @@ def comparetreepath(tr1, tr2):
                             schema='newick',
                             rooting='force-unrooted',
                             taxon_namespace=tax)
- 
-    tr2 = dendropy.Tree.get(path=tr2,
+    import treeswift as ts
+    with open(tr2) as fh: tr2ts = ts.read_tree_newick(fh.read())
+    for n in tr2ts.traverse_postorder(True, True):
+        if n.label and "_" in n.label:
+            n.label = n.label.split("_")[0]
+    tr2 = dendropy.Tree.get(data=tr2ts.newick(),
                             schema='newick',
                             rooting='force-unrooted',
                             taxon_namespace=tax)
@@ -76,11 +80,19 @@ parser.add_argument("-i", "--input", type=str,
 args = parser.parse_args()
 df = pd.read_csv(args.input)
 nrf = []
-
+time = []
+mem = []
 for i, r in df.iterrows():
+    print(f"comparing {r.streepath} {r.inputpath}")
     nrf.append(comparetreepath(r.streepath, r.inputpath)[-1])
+    with open(r.inputpath + ".meta") as fh:
+        s = fh.read().split(";")
+        time.append(float(s[0]))
+        mem.append(float(s[1]) / 1e6)
 df["rf"] = nrf
-dfa = df.set_index(['condition', 'k', 'method'])[['rf']]
+df["time"] = time
+df["mem"] = mem
+dfa = df.set_index(['condition', 'k', 'method'])[['rf', 'time', 'mem']]
 with pd.option_context("display.max_rows", 1000):
     mdfa = dfa.groupby(level=list(range(3))).mean()
     print(mdfa)
