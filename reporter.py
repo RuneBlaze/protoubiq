@@ -4,6 +4,7 @@ from os.path import join, isfile
 import os
 # import asterid as ad
 import matplotlib.pyplot as plt
+import matplotlib
 from scipy.stats import wilcoxon
 import numpy as np
 from random import sample
@@ -13,6 +14,8 @@ from dendropy.calculate.treecompare \
     import false_positives_and_negatives
 import sys
 import json
+
+matplotlib.use('Agg')
 
 localization = {}
 
