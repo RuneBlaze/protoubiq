@@ -1,15 +1,23 @@
-
 import argparse
 import tempfile
-from os.path import join
+from os.path import join, isfile
 import os
-import asterid as ad
+# import asterid as ad
+import matplotlib.pyplot as plt
+from scipy.stats import wilcoxon
+import numpy as np
 from random import sample
 import pandas as pd
 import dendropy
 from dendropy.calculate.treecompare \
     import false_positives_and_negatives
 import sys
+import json
+
+localization = {}
+
+if isfile("localization.json"):
+    with open("localization.json") as fh: localization = json.load(fh)
  
 def compare_trees(tr1, tr2):
     # Find leaf labels that are in both trees
@@ -93,7 +101,78 @@ df["rf"] = nrf
 df["time"] = time
 df["mem"] = mem
 dfa = df.set_index(['condition', 'k', 'method'])[['rf', 'time', 'mem']]
+
+def f7(seq):
+    seen = set()
+    seen_add = seen.add
+    return [x for x in seq if not (x in seen or seen_add(x))]
+order = f7(df.method)
+first_method = df.method[0]
+
+for c in set(df.condition):
+    for k in set(df.k):
+        for m in set(df.method):
+            myrf = dfa.loc[(c, k, m)].rf
+            herrf = dfa.loc[(c, k, first_method)].rf
+            if (len(myrf) != len(herrf)):
+                continue
+            if np.allclose(myrf, herrf):
+                continue
+            print(c, k, m)
+            print("{:.4f}".format(wilcoxon(myrf, herrf).pvalue))
+            # rfs = df[(df.condition == c) ]
+
+toremove = []
+for c in set(df.condition):
+    for k in set(df.k):
+        for m in set(df.method):
+            myrf = dfa.loc[(c, k, m)].rf
+            herrf = dfa.loc[(c, k, first_method)].rf
+            if len(myrf) < len(herrf):
+                toremove.append((c,k,m))
+
+for c,k,m in toremove:
+    i = dfa.loc[(c,k, m)].index
+    # print(i)
+    df = df[df.apply(lambda x: not (x.condition == c and x.k == k and x.method == m), axis=1)]
+    # df.drop(i, inplace=True)
+dfa = df.set_index(['condition', 'k', 'method'])[['rf', 'time', 'mem']]
 with pd.option_context("display.max_rows", 1000):
-    mdfa = dfa.groupby(level=list(range(3))).mean()
+    ddf = dfa.groupby(level=list(range(3)))
+    # import code; code.interact(local=dict(globals(), **locals()))
+    mdfa = ddf.mean()
     print(mdfa)
     print(mdfa.to_latex(escape=False,float_format="{:0.3f}".format))
+
+import seaborn as sns
+sns.set_style("whitegrid")
+c = set(df.condition)
+for a in ["rf", "time", "mem"]:
+    results = {}
+    for x in c:
+        # we should normalize across all conditions
+        with sns.plotting_context(font_scale=1.2):
+            g = sns.catplot(x="k", y=a, hue="method",
+                        data=df[df.condition == x], kind="bar", ci="sd",hue_order=order)
+            legend = g._legend
+            legend.set_title("Method")
+            axes = g.axes.flatten()
+            axes[0].set_title(localization.get(x, x))
+            # g.set_titles()
+            for t in legend.texts:
+                t.set_text({
+                    "fastral": "FASTRAL",
+                    "astral": "ASTRAL",
+                    "astrid": "ASTRID",
+                    "fastral2ftc": "FASTRAL-J",
+                    "astralj": "ASTRAL-J",
+                }[t.get_text()])
+            g.set_axis_labels("# Genes",
+            {"time": "Time (s)", "rf": "nRF", "mem": "Peak Memory (GB)"}[a])
+            results[f"{x}_{a}.png"] = g
+    maxylim = max(results[k].axes[0,0].get_ylim()[1] for k in results)
+    for k in results:
+        results[k].set(ylim=(0, maxylim))
+        results[k].savefig(k)
+        # plt.close()
+# sns.factorplot(x='k', y ='rf', hue='method', data = df, kind='bar')

@@ -223,7 +223,10 @@ function againstmode()
     end
     csvp = tempname()
     CSV.write(csvp, df)
-    reporter = joinpath(@__DIR__,"protoubiq/reporter.py")
+    reporter = joinpath(@__DIR__,"reporter.py")
+    if !isfile(reporter)
+        reporter = joinpath(@__DIR__,"protoubiq/reporter.py")
+    end
     run(`python3 $reporter -i $csvp`)
 end
 
