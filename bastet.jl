@@ -19,9 +19,14 @@ function parse_commandline()
             nargs = '+'
             arg_type = Int64
             nargs = 3
-        default = [1, 1, 1]
-
-
+            default = [1, 1, 1]
+        "--partition", "-p"
+            help="partition"
+            arg_type = String
+        default = "secondary-Eth"
+        "--cores", "-c"
+        help="cores"
+        default = 1
         "--exec", "-e"
             help = ""
             # required = true
@@ -114,11 +119,13 @@ function showclean(io::IO, cmd::Cmd)
     nothing
 end
 
-function mk_slurm(io, fname, jobname, cmds)
+function mk_slurm(io, fname, jobname, cmds, part, cores)
     template = read(joinpath(@__DIR__, "slurmtpl.sh"), String)
     sub = Dict(
         "<jobname>" => jobname,
         "<fullpath>" => fname,
+        "<partition>" => part,
+        "<cores>" => cores,
     )
     println(io, subst(template, sub))
     for c in cmds
@@ -141,22 +148,39 @@ using Base.Iterators
 function execmode()
     SUFFIX = args["suffix"]
     EXEC = args["exec"]
+    PART = args["partition"]
     BINS = haskey(args, "bins") ? args["bins"] : -1
     RANGE = levelrange(args["range"]...)
+    CORES = args["cores"]
     cmds = String[]
+    @info "running on partition $PART"
     for (f, (st, ed)) = product(files, RANGE)
         @info "processing $f"
         outputf = "$f.$SUFFIX"
+        noext = replace(splitext(f)[1], "." => "_")
         metaf = "$outputf.meta"
         if isfile(outputf) && filesize(outputf) > 0
             @warn "$f has already finished processing"
             continue
         end
+        condition_level = 1
+        cond = splitpath(f)[condition_level]
+        splitted = splitpath(dirname(f))
+        repname = basename(dirname(f))
+        bname = basename(f)
         subst_map = Dict(
             "{{}}" => f,
             "<output>" => outputf,
             "<s>" => st,
             "<e>" => ed,
+            "<repname>" => repname,
+            "<repname-1>" => splitted[max(end - 1, 1)],
+            "<cond>" => cond,
+            "<noext>" => noext,
+            "<bname>" => bname,
+            "<bname->" => replace(bname, "." => "_"),
+            "{//}" => dirname(f),
+            "{.}" => splitext(f)[1],
         )
         basecmd = subst(EXEC, subst_map) #Cmd([subst(e, subst_map) for e in split(EXEC, " ")])
         # memfile = tempname()
@@ -173,7 +197,7 @@ function execmode()
         of = joinpath(args["output"], "$SUFFIX.$i.sh")
         @info "written to $of"
         open(of, "w+") do f
-            mk_slurm(f, of, "$SUFFIX.$i", b)
+            mk_slurm(f, of, "$SUFFIX.$i", b, PART, CORES)
         end
     end
 
@@ -205,6 +229,7 @@ function againstmode()
         streepath = String[],
         method = String[],
         k = Int[],
+        gtreepath = String[],
     )
     for f = files
         cond = splitpath(f)[condition_level]
@@ -217,8 +242,10 @@ function againstmode()
                 continue
             end
             sp = subst(args["against"], Dict("<repname>" => repname, "<repname-1>" => splitted[max(end - 1, 1)], "<cond>" => cond))
-            k = parse(Int, last(split(f, "."))[2:end])
-            push!(df, (ip, cond, sp, a, k))
+            
+            #k = parse(Int, split(f, ".")[end-1])
+            k = parse(Int, split(f, ".")[end][2:end])
+            push!(df, (ip, cond, sp, a, k, f))
         end
     end
     csvp = tempname()
