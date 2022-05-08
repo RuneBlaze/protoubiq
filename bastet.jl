@@ -3,6 +3,7 @@ const shell_special = "#{}()[]<>|&*?~;"
 using ArgParse, Glob
 using Base.Filesystem
 using DataFrames
+using Crayons.Box
 using CSV
 
 function parse_commandline()
@@ -23,10 +24,14 @@ function parse_commandline()
         "--partition", "-p"
             help="partition"
             arg_type = String
-        default = "secondary-Eth"
+            default = "secondary-fdr"
+        "--grid", "-g"
+            help = "gridsearch"
+            arg_type = String
+            nargs = '+'
         "--cores", "-c"
-        help="cores"
-        default = 1
+            help="cores"
+            default = 1
         "--exec", "-e"
             help = ""
             # required = true
@@ -39,7 +44,6 @@ function parse_commandline()
             default = -1
         "--output", "-o"
             arg_type = String
-            # required = true
         "--across", "-a"
             arg_type = String
             nargs = '+'
@@ -153,8 +157,9 @@ function execmode()
     RANGE = levelrange(args["range"]...)
     CORES = args["cores"]
     cmds = String[]
+    suffixes = String[]
     @info "running on partition $PART"
-    for (f, (st, ed)) = product(files, RANGE)
+    for (f, (st, ed), g) = product(files, RANGE, args["grid"])
         @info "processing $f"
         outputf = "$f.$SUFFIX"
         noext = replace(splitext(f)[1], "." => "_")
@@ -179,35 +184,42 @@ function execmode()
             "<noext>" => noext,
             "<bname>" => bname,
             "<bname->" => replace(bname, "." => "_"),
+            "{/}" => bname,
             "{//}" => dirname(f),
             "{.}" => splitext(f)[1],
+            "{/.}" => splitext(bname)[1],
+            "<gridparam>" => g,
         )
-        basecmd = subst(EXEC, subst_map) #Cmd([subst(e, subst_map) for e in split(EXEC, " ")])
-        # memfile = tempname()
+        basecmd = subst(EXEC, subst_map)
         pgm = Sys.isapple() ? "gtime" : "/usr/bin/time"
         finalcmd = "$pgm -f '%e;%M' -o $metaf $basecmd"
         @info "final command: $finalcmd"
-
         push!(cmds, finalcmd)
+        push!(suffixes, subst(SUFFIX, subst_map))
     end
 
-    bins = distributebins(cmds, BINS == -1 ? length(cmds) : BINS)
+    bins = distributebins(collect(zip(cmds,suffixes)), BINS == -1 ? length(cmds) : BINS)
     mkpath(args["output"])
     for (i,b)=enumerate(bins)
-        of = joinpath(args["output"], "$SUFFIX.$i.sh")
+        if isempty(b)
+            continue
+        end
+        command, suffix = b
+        of = joinpath(args["output"], "$suffix.$i.sh")
         @info "written to $of"
         open(of, "w+") do f
-            mk_slurm(f, of, "$SUFFIX.$i", b, PART, CORES)
+            mk_slurm(f, of, "$SUFFIX.$i", command, PART, CORES)
         end
     end
 
     function commandhelper(output)
-        "find $output -name \"*.sh\" | xargs -I '{}' sbatch {}"
+        "fd sh\$ $output -x sbatch {}"
     end
 
     println("Generation finished!")
     c = commandhelper(args["output"])
-    println("Run `$c` to queue your job")
+    println("Run the command below:")
+    println(GREEN_FG(c))
 end
 
 function againstmode()
@@ -215,13 +227,6 @@ function againstmode()
     # we first make a temporary dataframe of all the parameters
     # and leave the heavy-lifting to Python
     condition_level = 1
-    #tmp = splitpath(files[1])[condition_level]
-    #for f = files
-    #    if splitpath(f)[condition_level] != tmp
-    #        condition_level += 1
-    #        break
-    #    end
-    #end
 
     df = DataFrame(
         inputpath = String[],
@@ -243,7 +248,6 @@ function againstmode()
             end
             sp = subst(args["against"], Dict("<repname>" => repname, "<repname-1>" => splitted[max(end - 1, 1)], "<cond>" => cond))
             
-            #k = parse(Int, split(f, ".")[end-1])
             k = parse(Int, split(f, ".")[end][2:end])
             push!(df, (ip, cond, sp, a, k, f))
         end
